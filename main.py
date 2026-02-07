@@ -17,7 +17,11 @@ from config import (
     FULL_LOOKBACK_DAYS,
     DATA_DIR,
     OUTPUT_DIR,
+    MARKET_TICKERS,
+    CRYPTO_TICKERS,
+    KOREA_TICKERS,
 )
+from db_manager import DatabaseManager
 
 
 def parse_args():
@@ -216,7 +220,7 @@ def convert_to_native_types(obj):
         return obj
 
 
-def save_results(results: Dict[str, Any]) -> None:
+def save_results(results: Dict[str, Any], save_to_db: bool = True) -> None:
     """결과 저장"""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -227,6 +231,80 @@ def save_results(results: Dict[str, Any]) -> None:
     print("\n" + "="*70)
     print("💾 SAVING RESULTS")
     print("="*70)
+
+    # ========================================================================
+    # 1. DATABASE SAVING
+    # ========================================================================
+    if save_to_db:
+        try:
+            print("\n📦 Saving to database...")
+            db = DatabaseManager()
+
+            # Save collection run metadata
+            collection_run_id = db.save_collection_run(results)
+            print(f"✅ Collection run saved (ID: {collection_run_id})")
+
+            # Save FRED data
+            if 'fred' in results['data']:
+                db.save_fred_data(collection_run_id, results['data']['fred']['raw_data'])
+
+            # Save Market data
+            if 'market' in results['data']:
+                # Category mapping from config
+                category_map = {}
+                for category, tickers in MARKET_TICKERS.items():
+                    for ticker in tickers.keys():
+                        category_map[ticker] = category
+
+                db.save_market_data(
+                    collection_run_id,
+                    results['data']['market']['raw_data'],
+                    category_map
+                )
+
+            # Save Crypto data
+            if 'crypto' in results['data']:
+                # Category mapping from config
+                category_map = {}
+                for category, tickers in CRYPTO_TICKERS.items():
+                    for ticker in tickers.keys():
+                        category_map[ticker] = category
+
+                db.save_crypto_data(
+                    collection_run_id,
+                    results['data']['crypto']['raw_data'],
+                    category_map
+                )
+
+            # Save Korea data
+            if 'korea' in results['data']:
+                # Category mapping from config
+                category_map = {}
+                for category, tickers in KOREA_TICKERS.items():
+                    for ticker in tickers.keys():
+                        category_map[ticker] = category
+
+                db.save_korea_data(
+                    collection_run_id,
+                    results['data']['korea']['raw_data'],
+                    category_map
+                )
+
+            # Print DB stats
+            stats = db.get_db_stats()
+            print(f"\n📊 Database Statistics:")
+            print(f"   Total records: {stats['fred_data_count'] + stats['market_data_count'] + stats['crypto_data_count'] + stats['korea_data_count']:,}")
+            print(f"   Database size: {stats['db_size_mb']:.2f} MB")
+            print(f"   Database path: {db.db_path}")
+
+        except Exception as e:
+            print(f"⚠️  Database save failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # ========================================================================
+    # 2. FILE SAVING (CSV & JSON)
+    # ========================================================================
 
     # JSON 저장 (DataFrame은 제외)
     json_results = {

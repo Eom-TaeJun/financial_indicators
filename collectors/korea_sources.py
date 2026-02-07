@@ -228,6 +228,98 @@ class PyKrxSource:
             print(f"      pykrx KOSPI error: {e}")
             return None
 
+    def fetch_institutional_trading(self, ticker: str, start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
+        """
+        기관/외국인 매매 데이터 수집
+
+        Args:
+            ticker: yfinance 형식 티커
+            start_date: 시작일
+            end_date: 종료일
+
+        Returns:
+            DataFrame with institutional/foreign trading data
+        """
+        if not self.available:
+            return None
+
+        # 심볼 변환
+        krx_symbol = self.SYMBOL_MAP.get(ticker)
+        if not krx_symbol:
+            return None
+
+        try:
+            # 투자자별 순매수 데이터
+            df = self.stock.get_market_trading_value_by_investor(
+                fromdate=start_date.strftime('%Y%m%d'),
+                todate=end_date.strftime('%Y%m%d'),
+                ticker=krx_symbol,
+                etf=False,
+                etn=False,
+                elw=False
+            )
+
+            if df.empty:
+                return None
+
+            # 필요한 컬럼만 추출 및 영문으로 변환
+            result = pd.DataFrame(index=df.index)
+
+            # 기관 순매수 (금융투자 + 보험 + 투신 + 사모 + 은행 + 기타금융 + 연기금)
+            if '금융투자' in df.columns and '기관합계' in df.columns:
+                result['institutional_net'] = df['기관합계']
+            elif '금융투자' in df.columns:
+                institutional_cols = [col for col in df.columns if any(
+                    word in col for word in ['금융투자', '보험', '투신', '은행', '연기금', '사모']
+                )]
+                if institutional_cols:
+                    result['institutional_net'] = df[institutional_cols].sum(axis=1)
+
+            # 외국인 순매수
+            if '외국인' in df.columns:
+                result['foreign_net'] = df['외국인']
+
+            return result if not result.empty else None
+
+        except Exception as e:
+            # 데이터가 없거나 에러 발생 시 조용히 None 반환
+            return None
+
+    def fetch_market_cap(self, ticker: str, date: datetime) -> Optional[float]:
+        """
+        시가총액 조회
+
+        Args:
+            ticker: yfinance 형식 티커
+            date: 조회 날짜
+
+        Returns:
+            시가총액 (억원)
+        """
+        if not self.available:
+            return None
+
+        krx_symbol = self.SYMBOL_MAP.get(ticker)
+        if not krx_symbol:
+            return None
+
+        try:
+            df = self.stock.get_market_cap_by_date(
+                fromdate=date.strftime('%Y%m%d'),
+                todate=date.strftime('%Y%m%d'),
+                ticker=krx_symbol
+            )
+
+            if df.empty or '시가총액' not in df.columns:
+                return None
+
+            # 시가총액 (원 단위) -> 억원 단위로 변환
+            market_cap = df['시가총액'].iloc[-1] / 100000000
+            return float(market_cap)
+
+        except Exception:
+            return None
+
 
 def test_korea_sources():
     """한국 데이터 소스 테스트"""

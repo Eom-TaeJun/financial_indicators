@@ -97,7 +97,7 @@ class KoreaCollector:
 
     def fetch_ticker(self, ticker: str, name: str) -> Tuple[Optional[pd.DataFrame], Dict]:
         """
-        단일 티커 데이터 수집 (with multi-source fallback)
+        단일 티커 데이터 수집 (with multi-source fallback + 고급 데이터)
 
         Args:
             ticker: 티커 심볼
@@ -112,7 +112,10 @@ class KoreaCollector:
             'success': False,
             'source': None,
             'attempts': [],
+            'has_advanced_data': False,
         }
+
+        data = None
 
         # 1. FinanceDataReader 시도 (Primary)
         if self.use_multi_source:
@@ -123,10 +126,9 @@ class KoreaCollector:
                 status['success'] = True
                 status['source'] = 'fdr'
                 print(f"   ✅ {ticker:15s} ({name}) - FDR: {len(data)} days")
-                return data, status
 
         # 2. pykrx 시도 (Secondary)
-        if self.use_multi_source:
+        if data is None and self.use_multi_source:
             data = self._fetch_via_pykrx(ticker)
             status['attempts'].append('pykrx')
 
@@ -134,22 +136,44 @@ class KoreaCollector:
                 status['success'] = True
                 status['source'] = 'pykrx'
                 print(f"   ✅ {ticker:15s} ({name}) - pykrx: {len(data)} days")
-                return data, status
 
         # 3. yfinance 시도 (Fallback)
-        data = self._fetch_via_yfinance(ticker)
-        status['attempts'].append('yfinance')
+        if data is None:
+            data = self._fetch_via_yfinance(ticker)
+            status['attempts'].append('yfinance')
 
-        if data is not None and not data.empty:
-            status['success'] = True
-            status['source'] = 'yfinance'
-            print(f"   ✅ {ticker:15s} ({name}) - yfinance (fallback): {len(data)} days")
-            return data, status
+            if data is not None and not data.empty:
+                status['success'] = True
+                status['source'] = 'yfinance'
+                print(f"   ✅ {ticker:15s} ({name}) - yfinance (fallback): {len(data)} days")
 
-        # 모두 실패
-        status['success'] = False
-        print(f"   ❌ {ticker:15s} ({name}) - All sources failed")
-        return None, status
+        # 기본 데이터 수집 실패
+        if data is None or data.empty:
+            status['success'] = False
+            print(f"   ❌ {ticker:15s} ({name}) - All sources failed")
+            return None, status
+
+        # 고급 데이터 추가 (pykrx 사용)
+        if self.use_multi_source and self.pykrx.available:
+            try:
+                # 기관/외국인 매매 데이터
+                trading_data = self.pykrx.fetch_institutional_trading(ticker, self.start_date, self.end_date)
+                if trading_data is not None and not trading_data.empty:
+                    # 날짜 인덱스 맞추기
+                    data = data.join(trading_data, how='left')
+                    status['has_advanced_data'] = True
+
+                # 시가총액은 마지막 날짜 기준으로 수집
+                # (API 호출 줄이기 위해)
+                # market_cap = self.pykrx.fetch_market_cap(ticker, self.end_date)
+                # if market_cap:
+                #     data['market_cap'] = market_cap
+
+            except Exception:
+                # 고급 데이터 수집 실패는 무시
+                pass
+
+        return data, status
 
     def collect_category(self, category_name: str, tickers: Dict[str, str]) -> Dict[str, pd.DataFrame]:
         """

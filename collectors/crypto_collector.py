@@ -25,8 +25,8 @@ class CryptoCollector:
     암호화폐 및 RWA 데이터 수집기
 
     Data Source Priority:
-    1. CoinGecko API (무료, 추천 ⭐)
-    2. Binance API (무료)
+    1. Binance API (무료, OHLC 제공 ⭐)
+    2. CoinGecko API (무료, Close+Volume만)
     3. yfinance (fallback)
     """
 
@@ -110,7 +110,18 @@ class CryptoCollector:
             'attempts': [],
         }
 
-        # 1. CoinGecko 시도 (Primary)
+        # 1. Binance 시도 (Primary - OHLC 제공)
+        if self.use_multi_source:
+            data = self._fetch_via_binance(ticker)
+            status['attempts'].append('binance')
+
+            if data is not None and not data.empty:
+                status['success'] = True
+                status['source'] = 'binance'
+                print(f"   ✅ {ticker:12s} ({name}) - Binance (OHLC): {len(data)} days")
+                return data, status
+
+        # 2. CoinGecko 시도 (Secondary - Close+Volume만)
         if self.use_multi_source:
             data = self._fetch_via_coingecko(ticker)
             status['attempts'].append('coingecko')
@@ -119,17 +130,6 @@ class CryptoCollector:
                 status['success'] = True
                 status['source'] = 'coingecko'
                 print(f"   ✅ {ticker:12s} ({name}) - CoinGecko: {len(data)} days")
-                return data, status
-
-        # 2. Binance 시도 (Secondary)
-        if self.use_multi_source:
-            data = self._fetch_via_binance(ticker)
-            status['attempts'].append('binance')
-
-            if data is not None and not data.empty:
-                status['success'] = True
-                status['source'] = 'binance'
-                print(f"   ✅ {ticker:12s} ({name}) - Binance: {len(data)} days")
                 return data, status
 
         # 3. yfinance 시도 (Fallback)
