@@ -1,0 +1,101 @@
+# ============================================
+# API Keys and Sensitive Information (최우선!)
+# ============================================
+.env
+.env.*
+!.env.example
+*.key
+*_api_key*
+credentials.json
+secrets.json
+config_local.py
+*secret*
+*password*
+
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+testenv/
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ============================================
+# Data files (개인 수집 데이터 포함 가능)
+# ============================================
+data/
+outputs/
+*.csv
+*.json
+*.xlsx
+*.xls
+*.db
+*.sqlite
+*.sqlite3
+
+# 단, config 파일은 제외하지 않음
+!config.py
+!requirements.txt
+!*.example.json
+
+# ============================================
+# IDE
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ============================================
+# OS
+# ============================================
+.DS_Store
+Thumbs.db
+*.bak
+*.backup
+
+# ============================================
+# Logs
+# ============================================
+*.log
+logs/
+
+# ============================================
+# Jupyter Notebook
+# ============================================
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================
+# Testing
+# ============================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache
+
+# ============================================
+# mypy
+# ============================================
+.mypy_cache/
+.dmypy.json
+dmypy.json

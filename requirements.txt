@@ -1,0 +1,19 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# yfinance (fallback)
+yfinance>=0.2.28
+
+# 암호화폐 데이터 소스 (선택)
+# CoinGecko, Binance는 별도 라이브러리 불필요 (requests 사용)
+
+# 한국 시장 데이터 소스 (선택, 추천)
+finance-datareader>=0.9.50  # 한국 시장 전용, 무료
+pykrx>=1.0.36               # KRX 공식 데이터, 무료
+
+# 미국 시장 고급 데이터 (선택)
+# alpha-vantage  # Alpha Vantage API (API key 필요)
+# polygon-api-client  # Polygon.io API (API key 필요)
