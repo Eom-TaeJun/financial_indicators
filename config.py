@@ -394,3 +394,29 @@ COLLECTION_OPTIONS = {
         'include_bonds': True,
     },
 }
+
+# ============================================================================
+# RA Company Analysis / PostgreSQL (2026-02-08)
+# ============================================================================
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+# RA 기업분석 기본 커버리지 (매크로/ETF 전략 보조)
+RA_COMPANY_TICKERS = [
+    'AAPL', 'MSFT', 'NVDA', 'JPM', 'XOM'
+]
+
+RA_ETF_TICKERS = [
+    'SPY', 'QQQ', 'IWM', 'XLF', 'TLT', 'GLD'
+]
+
+# PostgreSQL 저장 옵션 (옵션)
+FI_RA_POSTGRES_ENABLED = _env_bool('FI_RA_POSTGRES_ENABLED', True)
+FI_PG_DSN = os.getenv('FI_PG_DSN', os.getenv('DATABASE_URL', ''))
+FI_PG_SCHEMA = os.getenv('FI_PG_SCHEMA', 'fi_ra')
+FI_PG_TABLE = os.getenv('FI_PG_TABLE', 'company_fundamentals')

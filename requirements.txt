@@ -17,3 +17,6 @@ pykrx>=1.0.36               # KRX 공식 데이터, 무료
 # 미국 시장 고급 데이터 (선택)
 # alpha-vantage  # Alpha Vantage API (API key 필요)
 # polygon-api-client  # Polygon.io API (API key 필요)
+
+# PostgreSQL integration for RA company analysis (optional)
+psycopg[binary]>=3.1.18
