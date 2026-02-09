@@ -4,13 +4,21 @@ Crypto Collector - 암호화폐 및 RWA 데이터 수집
 Multi-source with fallback: CoinGecko → Binance → yfinance
 """
 
-import yfinance as yf
+import logging
 import pandas as pd
-from datetime import datetime, timedelta
-from typing import Dict, Optional, List, Tuple
+from datetime import datetime
+from typing import Dict, Optional, Tuple
 import warnings
 
-from config import CRYPTO_TICKERS
+try:
+    from ..config import CRYPTO_TICKERS
+except ImportError:
+    from config import CRYPTO_TICKERS
+
+try:
+    from .base_multi_source import BaseMultiSourceCollector
+except ImportError:
+    from base_multi_source import BaseMultiSourceCollector
 
 try:
     from .crypto_sources import CoinGeckoSource, BinanceSource
@@ -19,8 +27,10 @@ except ImportError:
 
 warnings.filterwarnings('ignore')
 
+logger = logging.getLogger(__name__)
 
-class CryptoCollector:
+
+class CryptoCollector(BaseMultiSourceCollector):
     """
     암호화폐 및 RWA 데이터 수집기
 
@@ -36,40 +46,13 @@ class CryptoCollector:
             lookback_days: 데이터 수집 기간 (일)
             use_multi_source: True면 CoinGecko/Binance 사용, False면 yfinance만 사용
         """
-        self.lookback_days = lookback_days
-        self.end_date = datetime.now()
-        self.start_date = self.end_date - timedelta(days=lookback_days)
+        super().__init__(lookback_days=lookback_days)
         self.use_multi_source = use_multi_source
 
         # Data sources 초기화
         if use_multi_source:
             self.coingecko = CoinGeckoSource()
             self.binance = BinanceSource()
-
-        self.collection_status = {}
-
-    def _fetch_via_yfinance(self, ticker: str) -> Optional[pd.DataFrame]:
-        """yfinance를 통한 데이터 수집 (fallback)"""
-        try:
-            data = yf.download(
-                ticker,
-                start=self.start_date,
-                end=self.end_date,
-                progress=False,
-                auto_adjust=True
-            )
-
-            if data.empty:
-                return None
-
-            # MultiIndex 처리
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-
-            return data
-
-        except Exception as e:
-            return None
 
     def _fetch_via_coingecko(self, ticker: str) -> Optional[pd.DataFrame]:
         """CoinGecko를 통한 데이터 수집 (primary)"""
@@ -78,7 +61,7 @@ class CryptoCollector:
 
         try:
             return self.coingecko.fetch_historical_data(ticker, self.lookback_days)
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             return None
 
     def _fetch_via_binance(self, ticker: str) -> Optional[pd.DataFrame]:
@@ -88,7 +71,7 @@ class CryptoCollector:
 
         try:
             return self.binance.fetch_historical_data(ticker, self.lookback_days)
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             return None
 
     def fetch_ticker(self, ticker: str, name: str) -> Tuple[Optional[pd.DataFrame], Dict]:
@@ -118,7 +101,7 @@ class CryptoCollector:
             if data is not None and not data.empty:
                 status['success'] = True
                 status['source'] = 'binance'
-                print(f"   ✅ {ticker:12s} ({name}) - Binance (OHLC): {len(data)} days")
+                logger.info("%s (%s) - Binance (OHLC): %s days", ticker, name, len(data))
                 return data, status
 
         # 2. CoinGecko 시도 (Secondary - Close+Volume만)
@@ -129,7 +112,7 @@ class CryptoCollector:
             if data is not None and not data.empty:
                 status['success'] = True
                 status['source'] = 'coingecko'
-                print(f"   ✅ {ticker:12s} ({name}) - CoinGecko: {len(data)} days")
+                logger.info("%s (%s) - CoinGecko: %s days", ticker, name, len(data))
                 return data, status
 
         # 3. yfinance 시도 (Fallback)
@@ -139,12 +122,12 @@ class CryptoCollector:
         if data is not None and not data.empty:
             status['success'] = True
             status['source'] = 'yfinance'
-            print(f"   ✅ {ticker:12s} ({name}) - yfinance (fallback): {len(data)} days")
+            logger.info("%s (%s) - yfinance (fallback): %s days", ticker, name, len(data))
             return data, status
 
         # 모두 실패
         status['success'] = False
-        print(f"   ❌ {ticker:12s} ({name}) - All sources failed")
+        logger.warning("%s (%s) - all sources failed", ticker, name)
         return None, status
 
     def collect_category(self, category_name: str, tickers: Dict[str, str]) -> Dict[str, pd.DataFrame]:
@@ -158,7 +141,7 @@ class CryptoCollector:
         Returns:
             Dictionary of {ticker: DataFrame}
         """
-        print(f"\n🪙 Collecting {category_name} ({len(tickers)} assets)...")
+        logger.info("Collecting %s (%s assets)", category_name, len(tickers))
         results = {}
 
         for ticker, name in tickers.items():
@@ -169,7 +152,7 @@ class CryptoCollector:
                 results[ticker] = data
 
         success_rate = len(results) / len(tickers) * 100 if tickers else 0
-        print(f"   Success: {len(results)}/{len(tickers)} ({success_rate:.1f}%)")
+        logger.info("Success: %s/%s (%.1f%%)", len(results), len(tickers), success_rate)
 
         # Source 통계
         sources = {}
@@ -179,7 +162,7 @@ class CryptoCollector:
                 sources[source] = sources.get(source, 0) + 1
 
         if sources:
-            print(f"   Sources used: {sources}")
+            logger.info("Sources used: %s", sources)
 
         return results
 
@@ -190,10 +173,13 @@ class CryptoCollector:
         Returns:
             Dictionary of {ticker: DataFrame}
         """
-        print(f"\n📊 Crypto & RWA Data Collection")
-        print(f"   Period: {self.start_date.date()} to {self.end_date.date()}")
-        print(f"   Multi-source: {'Enabled ✓' if self.use_multi_source else 'Disabled (yfinance only)'}")
-        print("="*60)
+        logger.info("Crypto & RWA Data Collection")
+        logger.info("Period: %s to %s", self.start_date.date(), self.end_date.date())
+        logger.info(
+            "Multi-source: %s",
+            "Enabled ✓" if self.use_multi_source else "Disabled (yfinance only)",
+        )
+        logger.info("=" * 60)
 
         all_data = {}
         self.collection_status = {}
@@ -202,16 +188,8 @@ class CryptoCollector:
             results = self.collect_category(category.upper(), tickers)
             all_data.update(results)
 
-        print(f"\n✅ Total collected: {len(all_data)} assets\n")
+        logger.info("Total collected: %s assets", len(all_data))
         return all_data
-
-    def get_latest_prices(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
-        """각 자산의 최신 가격 추출"""
-        latest = {}
-        for ticker, df in data.items():
-            if not df.empty and 'Close' in df.columns:
-                latest[ticker] = df['Close'].iloc[-1]
-        return latest
 
     def calculate_volatility(self, data: Dict[str, pd.DataFrame], window: int = 30) -> Dict[str, float]:
         """변동성 계산 (30일 표준편차)"""
@@ -251,25 +229,6 @@ class CryptoCollector:
         corr = returns.corr()
 
         return corr
-
-    def get_source_statistics(self) -> Dict:
-        """데이터 소스 통계"""
-        stats = {
-            'total': len(self.collection_status),
-            'successful': 0,
-            'failed': 0,
-            'by_source': {},
-        }
-
-        for status in self.collection_status.values():
-            if status['success']:
-                stats['successful'] += 1
-                source = status['source']
-                stats['by_source'][source] = stats['by_source'].get(source, 0) + 1
-            else:
-                stats['failed'] += 1
-
-        return stats
 
 
 # ============================================================================

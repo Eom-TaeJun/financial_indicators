@@ -4,12 +4,15 @@ Korea Market Data Sources
 한국 시장 데이터 소스 (FinanceDataReader, pykrx)
 """
 
+import logging
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 import warnings
 
 warnings.filterwarnings('ignore')
+
+logger = logging.getLogger(__name__)
 
 
 class FinanceDataReaderSource:
@@ -60,7 +63,7 @@ class FinanceDataReaderSource:
         except ImportError:
             self.fdr = None
             self.available = False
-            print("   ⚠️  FinanceDataReader not installed. Run: pip install finance-datareader")
+            logger.warning("FinanceDataReader not installed. Run: pip install finance-datareader")
 
     def fetch_data(self, ticker: str, start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
         """
@@ -102,8 +105,8 @@ class FinanceDataReaderSource:
 
             return df
 
-        except Exception as e:
-            print(f"      FDR error for {ticker}: {e}")
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("FDR parse error for %s: %s", ticker, e)
             return None
 
 
@@ -142,7 +145,7 @@ class PyKrxSource:
         except ImportError:
             self.stock = None
             self.available = False
-            print("   ⚠️  pykrx not installed. Run: pip install pykrx")
+            logger.warning("pykrx not installed. Run: pip install pykrx")
 
     def fetch_data(self, ticker: str, start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
         """
@@ -185,8 +188,8 @@ class PyKrxSource:
 
             return df
 
-        except Exception as e:
-            print(f"      pykrx error for {ticker}: {e}")
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("pykrx parse error for %s: %s", ticker, e)
             return None
 
     def fetch_kospi_index(self, start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
@@ -224,8 +227,8 @@ class PyKrxSource:
 
             return df
 
-        except Exception as e:
-            print(f"      pykrx KOSPI error: {e}")
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("pykrx KOSPI parse error: %s", e)
             return None
 
     def fetch_institutional_trading(self, ticker: str, start_date: datetime, end_date: datetime) -> Optional[pd.DataFrame]:
@@ -281,7 +284,7 @@ class PyKrxSource:
 
             return result if not result.empty else None
 
-        except Exception as e:
+        except (ValueError, KeyError, TypeError):
             # 데이터가 없거나 에러 발생 시 조용히 None 반환
             return None
 
@@ -317,7 +320,7 @@ class PyKrxSource:
             market_cap = df['시가총액'].iloc[-1] / 100000000
             return float(market_cap)
 
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             return None
 
 

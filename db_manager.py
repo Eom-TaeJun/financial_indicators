@@ -5,15 +5,26 @@ SQLite를 사용한 금융 데이터 저장 및 조회
 """
 
 import sqlite3
+import logging
 import pandas as pd
-from datetime import datetime
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, Iterable, Sequence
 from pathlib import Path
 import json
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
     """SQLite 데이터베이스 관리 클래스"""
+
+    _OHLCV_DB_COLUMNS = ("open", "high", "low", "close", "volume")
+    _OHLCV_DF_COLUMNS = ("Open", "High", "Low", "Close", "Volume")
+    _KOREA_EXTRA_COLUMNS = ("institutional_net", "foreign_net", "market_cap")
+    _OHLCV_TABLE_COLUMNS = {
+        "market_data": _OHLCV_DB_COLUMNS,
+        "crypto_data": _OHLCV_DB_COLUMNS,
+        "korea_data": _OHLCV_DB_COLUMNS + _KOREA_EXTRA_COLUMNS,
+    }
 
     def __init__(self, db_path: str = 'data/financial_indicators.db'):
         """
@@ -162,6 +173,105 @@ class DatabaseManager:
         conn.commit()
         conn.close()
 
+    @staticmethod
+    def _to_db_date(value: Any) -> str:
+        """DataFrame index 값을 DB 저장용 YYYY-MM-DD 문자열로 변환."""
+        return value.strftime("%Y-%m-%d") if hasattr(value, "strftime") else str(value)
+
+    @staticmethod
+    def _to_optional_float(value: Any) -> Optional[float]:
+        """값을 float로 변환. 결측/변환 불가 값은 None."""
+        if pd.isna(value):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _to_positive_int(value: Any, default: int = 1) -> int:
+        """양의 정수로 변환. 실패 시 default 반환."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
+
+    def _build_ohlcv_records(
+        self,
+        collection_run_id: int,
+        data: Dict[str, pd.DataFrame],
+        value_columns: Sequence[str],
+        category_map: Optional[Dict[str, str]] = None,
+    ) -> list[tuple]:
+        """OHLCV 계열 DataFrame 딕셔너리를 INSERT 레코드로 변환."""
+        category_map = category_map or {}
+        records: list[tuple] = []
+
+        for ticker, df in data.items():
+            if df.empty:
+                continue
+
+            category = category_map.get(ticker, "unknown")
+
+            for idx, row in df.iterrows():
+                values = tuple(self._to_optional_float(row.get(col)) for col in value_columns)
+                records.append(
+                    (
+                        collection_run_id,
+                        self._to_db_date(idx),
+                        ticker,
+                        category,
+                        *values,
+                    )
+                )
+
+        return records
+
+    def _save_ohlcv_table(
+        self,
+        table: str,
+        collection_run_id: int,
+        data: Dict[str, pd.DataFrame],
+        category_map: Optional[Dict[str, str]] = None,
+    ) -> int:
+        """market/crypto/korea OHLCV 계열 테이블 저장 공통 함수."""
+        value_columns = self._OHLCV_TABLE_COLUMNS.get(table)
+        if value_columns is None:
+            raise ValueError(f"Unsupported OHLCV table: {table}")
+
+        df_columns: Iterable[str] = self._OHLCV_DF_COLUMNS
+        if table == "korea_data":
+            df_columns = self._OHLCV_DF_COLUMNS + self._KOREA_EXTRA_COLUMNS
+
+        records = self._build_ohlcv_records(
+            collection_run_id=collection_run_id,
+            data=data,
+            value_columns=tuple(df_columns),
+            category_map=category_map,
+        )
+
+        if not records:
+            return 0
+
+        placeholders = ", ".join(["?"] * (4 + len(value_columns)))
+        columns_sql = ", ".join(("collection_run_id", "date", "ticker", "category", *value_columns))
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.executemany(
+            f"""
+            INSERT OR REPLACE INTO {table}
+            ({columns_sql})
+            VALUES ({placeholders})
+        """,
+            records,
+        )
+        conn.commit()
+        conn.close()
+
+        return len(records)
+
     def save_collection_run(self, results: Dict[str, Any]) -> int:
         """
         수집 실행 메타데이터 저장
@@ -244,7 +354,7 @@ class DatabaseManager:
         conn.commit()
         conn.close()
 
-        print(f"✅ Saved {len(records)} FRED data points to database")
+        logger.info("Saved %s FRED data points to database", len(records))
 
     def save_market_data(self, collection_run_id: int, market_data: Dict[str, pd.DataFrame],
                         category_map: Optional[Dict[str, str]] = None):
@@ -256,41 +366,13 @@ class DatabaseManager:
             market_data: {ticker: DataFrame} 형태
             category_map: {ticker: category} 매핑
         """
-        category_map = category_map or {}
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        records = []
-        for ticker, df in market_data.items():
-            if df.empty:
-                continue
-
-            category = category_map.get(ticker, 'unknown')
-
-            for idx, row in df.iterrows():
-                records.append((
-                    collection_run_id,
-                    idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx),
-                    ticker,
-                    category,
-                    float(row.get('Open', 0)) if pd.notna(row.get('Open')) else None,
-                    float(row.get('High', 0)) if pd.notna(row.get('High')) else None,
-                    float(row.get('Low', 0)) if pd.notna(row.get('Low')) else None,
-                    float(row.get('Close', 0)) if pd.notna(row.get('Close')) else None,
-                    float(row.get('Volume', 0)) if pd.notna(row.get('Volume')) else None,
-                ))
-
-        # Batch insert
-        cursor.executemany("""
-            INSERT OR REPLACE INTO market_data
-            (collection_run_id, date, ticker, category, open, high, low, close, volume)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, records)
-
-        conn.commit()
-        conn.close()
-
-        print(f"✅ Saved {len(records)} market data points to database")
+        saved_count = self._save_ohlcv_table(
+            table="market_data",
+            collection_run_id=collection_run_id,
+            data=market_data,
+            category_map=category_map,
+        )
+        logger.info("Saved %s market data points to database", saved_count)
 
     def save_crypto_data(self, collection_run_id: int, crypto_data: Dict[str, pd.DataFrame],
                         category_map: Optional[Dict[str, str]] = None):
@@ -302,41 +384,13 @@ class DatabaseManager:
             crypto_data: {ticker: DataFrame} 형태
             category_map: {ticker: category} 매핑
         """
-        category_map = category_map or {}
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        records = []
-        for ticker, df in crypto_data.items():
-            if df.empty:
-                continue
-
-            category = category_map.get(ticker, 'unknown')
-
-            for idx, row in df.iterrows():
-                records.append((
-                    collection_run_id,
-                    idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx),
-                    ticker,
-                    category,
-                    float(row.get('Open', 0)) if pd.notna(row.get('Open')) else None,
-                    float(row.get('High', 0)) if pd.notna(row.get('High')) else None,
-                    float(row.get('Low', 0)) if pd.notna(row.get('Low')) else None,
-                    float(row.get('Close', 0)) if pd.notna(row.get('Close')) else None,
-                    float(row.get('Volume', 0)) if pd.notna(row.get('Volume')) else None,
-                ))
-
-        # Batch insert
-        cursor.executemany("""
-            INSERT OR REPLACE INTO crypto_data
-            (collection_run_id, date, ticker, category, open, high, low, close, volume)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, records)
-
-        conn.commit()
-        conn.close()
-
-        print(f"✅ Saved {len(records)} crypto data points to database")
+        saved_count = self._save_ohlcv_table(
+            table="crypto_data",
+            collection_run_id=collection_run_id,
+            data=crypto_data,
+            category_map=category_map,
+        )
+        logger.info("Saved %s crypto data points to database", saved_count)
 
     def save_korea_data(self, collection_run_id: int, korea_data: Dict[str, pd.DataFrame],
                        category_map: Optional[Dict[str, str]] = None):
@@ -348,45 +402,13 @@ class DatabaseManager:
             korea_data: {ticker: DataFrame} 형태
             category_map: {ticker: category} 매핑
         """
-        category_map = category_map or {}
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        records = []
-        for ticker, df in korea_data.items():
-            if df.empty:
-                continue
-
-            category = category_map.get(ticker, 'unknown')
-
-            for idx, row in df.iterrows():
-                records.append((
-                    collection_run_id,
-                    idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx),
-                    ticker,
-                    category,
-                    float(row.get('Open', 0)) if pd.notna(row.get('Open')) else None,
-                    float(row.get('High', 0)) if pd.notna(row.get('High')) else None,
-                    float(row.get('Low', 0)) if pd.notna(row.get('Low')) else None,
-                    float(row.get('Close', 0)) if pd.notna(row.get('Close')) else None,
-                    float(row.get('Volume', 0)) if pd.notna(row.get('Volume')) else None,
-                    float(row.get('institutional_net', 0)) if pd.notna(row.get('institutional_net')) else None,
-                    float(row.get('foreign_net', 0)) if pd.notna(row.get('foreign_net')) else None,
-                    float(row.get('market_cap', 0)) if pd.notna(row.get('market_cap')) else None,
-                ))
-
-        # Batch insert
-        cursor.executemany("""
-            INSERT OR REPLACE INTO korea_data
-            (collection_run_id, date, ticker, category, open, high, low, close, volume,
-             institutional_net, foreign_net, market_cap)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, records)
-
-        conn.commit()
-        conn.close()
-
-        print(f"✅ Saved {len(records)} korea data points to database")
+        saved_count = self._save_ohlcv_table(
+            table="korea_data",
+            collection_run_id=collection_run_id,
+            data=korea_data,
+            category_map=category_map,
+        )
+        logger.info("Saved %s korea data points to database", saved_count)
 
     def get_latest_fred_data(self, series_code: Optional[str] = None) -> pd.DataFrame:
         """
@@ -474,13 +496,14 @@ class DatabaseManager:
         """
         conn = self._get_connection()
 
-        query = f"""
+        safe_limit = self._to_positive_int(limit, default=1)
+        query = """
             SELECT *
             FROM collection_runs
             ORDER BY timestamp DESC
-            LIMIT {limit}
+            LIMIT ?
         """
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query, conn, params=(safe_limit,))
 
         conn.close()
 
@@ -521,18 +544,20 @@ class DatabaseManager:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
+
     # 테스트 코드
     db = DatabaseManager()
 
-    print("\n" + "="*70)
-    print("DATABASE MANAGER TEST")
-    print("="*70)
+    logger.info("=" * 70)
+    logger.info("DATABASE MANAGER TEST")
+    logger.info("=" * 70)
 
-    print(f"\n✅ Database initialized: {db.db_path}")
+    logger.info("Database initialized: %s", db.db_path)
 
     stats = db.get_db_stats()
-    print("\n📊 Database Statistics:")
+    logger.info("Database Statistics:")
     for key, value in stats.items():
-        print(f"   {key}: {value}")
+        logger.info("%s: %s", key, value)
 
-    print("\n✅ Database manager is ready!")
+    logger.info("Database manager is ready")

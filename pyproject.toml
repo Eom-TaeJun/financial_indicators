@@ -1,0 +1,18 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+  ".git",
+  ".pytest_cache",
+  "outputs",
+  "data",
+  "logs",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["."]

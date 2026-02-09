@@ -4,13 +4,19 @@ FRED Collector - 거시경제 지표 수집
 Federal Reserve Economic Data (FRED) API
 """
 
+import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 import time
 
-from config import FRED_API_KEY, FRED_SERIES
+try:
+    from ..config import FRED_API_KEY, FRED_SERIES
+except ImportError:
+    from config import FRED_API_KEY, FRED_SERIES
+
+logger = logging.getLogger(__name__)
 
 
 class FREDCollector:
@@ -56,12 +62,12 @@ class FREDCollector:
             data = response.json()
 
             if 'observations' not in data:
-                print(f"   ⚠️  {series_name}: No observations found")
+                logger.warning("%s: No observations found", series_name)
                 return None
 
             observations = data['observations']
             if not observations:
-                print(f"   ⚠️  {series_name}: Empty data")
+                logger.warning("%s: Empty data", series_name)
                 return None
 
             # DataFrame 생성
@@ -71,20 +77,20 @@ class FREDCollector:
             df = df[['date', 'value']].dropna()
 
             if df.empty:
-                print(f"   ⚠️  {series_name}: All values are NaN")
+                logger.warning("%s: All values are NaN", series_name)
                 return None
 
             df = df.rename(columns={'value': series_name})
             df = df.set_index('date')
 
-            print(f"   ✅ {series_name}: {len(df)} data points")
+            logger.info("%s: %s data points", series_name, len(df))
             return df
 
         except requests.exceptions.RequestException as e:
-            print(f"   ❌ {series_name}: Request failed - {e}")
+            logger.error("%s: request failed - %s", series_name, e)
             return None
-        except Exception as e:
-            print(f"   ❌ {series_name}: Error - {e}")
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("%s: parse error - %s", series_name, e)
             return None
 
     def collect_all(self, rate_limit_delay: float = 0.1) -> Dict[str, pd.DataFrame]:
@@ -97,14 +103,14 @@ class FREDCollector:
         Returns:
             Dictionary of {series_name: DataFrame}
         """
-        print(f"\n📊 Collecting FRED data (last {self.lookback_days} days)...")
-        print(f"   Period: {self.start_date.date()} to {self.end_date.date()}\n")
+        logger.info("Collecting FRED data (last %s days)", self.lookback_days)
+        logger.info("Period: %s to %s", self.start_date.date(), self.end_date.date())
 
         results = {}
         total = len(FRED_SERIES)
 
         for idx, (series_name, series_id) in enumerate(FRED_SERIES.items(), 1):
-            print(f"   [{idx}/{total}] {series_name} ({series_id})")
+            logger.info("[%s/%s] %s (%s)", idx, total, series_name, series_id)
             df = self.fetch_series(series_id, series_name)
 
             if df is not None:
@@ -114,7 +120,7 @@ class FREDCollector:
             if idx < total:
                 time.sleep(rate_limit_delay)
 
-        print(f"\n✅ FRED collection complete: {len(results)}/{total} series\n")
+        logger.info("FRED collection complete: %s/%s series", len(results), total)
         return results
 
     def get_latest_values(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
@@ -155,7 +161,7 @@ class FREDCollector:
                 combined = combined.join(df, how='outer')
 
         # Forward fill (최신 값으로 채우기)
-        combined = combined.fillna(method='ffill')
+        combined = combined.ffill()
 
         return combined
 

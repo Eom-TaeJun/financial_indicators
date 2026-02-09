@@ -4,6 +4,7 @@ US Market Data Sources
 미국 시장 데이터 소스 (Alpha Vantage, Polygon.io)
 """
 
+import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
@@ -14,6 +15,8 @@ from dotenv import load_dotenv
 
 # .env 파일 로드
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class AlphaVantageSource:
@@ -35,7 +38,7 @@ class AlphaVantageSource:
         self.api_key = api_key or os.getenv('ALPHA_VANTAGE_API_KEY')
         if not self.api_key:
             self.available = False
-            print("   ⚠️  ALPHA_VANTAGE_API_KEY not found")
+            logger.warning("ALPHA_VANTAGE_API_KEY not found")
         else:
             self.available = True
 
@@ -80,21 +83,21 @@ class AlphaVantageSource:
 
             # Error check
             if 'Error Message' in data:
-                print(f"      AlphaVantage error: {data['Error Message']}")
+                logger.error("AlphaVantage error: %s", data["Error Message"])
                 return None
 
             if 'Note' in data:
                 # Rate limit exceeded
-                print(f"      AlphaVantage rate limit: {data['Note']}")
+                logger.warning("AlphaVantage rate limit: %s", data["Note"])
                 return None
 
             if 'Information' in data:
                 # API limit message
-                print(f"      AlphaVantage info: {data['Information']}")
+                logger.warning("AlphaVantage info: %s", data["Information"])
                 return None
 
             if 'Time Series (Daily)' not in data:
-                print(f"      AlphaVantage: Unexpected response keys: {list(data.keys())}")
+                logger.warning("AlphaVantage unexpected response keys: %s", list(data.keys()))
                 return None
 
             # DataFrame 생성
@@ -115,10 +118,10 @@ class AlphaVantageSource:
             return df
 
         except requests.exceptions.RequestException as e:
-            print(f"      AlphaVantage request error: {e}")
+            logger.error("AlphaVantage request error: %s", e)
             return None
-        except Exception as e:
-            print(f"      AlphaVantage parse error: {e}")
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("AlphaVantage parse error: %s", e)
             return None
 
     def fetch_quote(self, ticker: str) -> Optional[Dict]:
@@ -160,8 +163,11 @@ class AlphaVantageSource:
                 'change_percent': quote.get('10. change percent', '0%'),
             }
 
-        except Exception as e:
-            print(f"      AlphaVantage quote error: {e}")
+        except requests.exceptions.RequestException as e:
+            logger.error("AlphaVantage quote request error: %s", e)
+            return None
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("AlphaVantage quote parse error: %s", e)
             return None
 
 
@@ -251,10 +257,10 @@ class PolygonSource:
             return df
 
         except requests.exceptions.RequestException as e:
-            print(f"      Polygon request error: {e}")
+            logger.error("Polygon request error: %s", e)
             return None
-        except Exception as e:
-            print(f"      Polygon parse error: {e}")
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("Polygon parse error: %s", e)
             return None
 
 

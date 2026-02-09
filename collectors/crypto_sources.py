@@ -4,11 +4,13 @@ Crypto Data Sources
 암호화폐 데이터 소스 (CoinGecko, Binance, yfinance)
 """
 
+import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
-import time
+from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class CoinGeckoSource:
@@ -92,10 +94,10 @@ class CoinGeckoSource:
             return df
 
         except requests.exceptions.RequestException as e:
-            print(f"      CoinGecko error for {ticker}: {e}")
+            logger.error("CoinGecko request error for %s: %s", ticker, e)
             return None
-        except Exception as e:
-            print(f"      CoinGecko parse error for {ticker}: {e}")
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("CoinGecko parse error for %s: %s", ticker, e)
             return None
 
     def fetch_current_price(self, ticker: str) -> Optional[float]:
@@ -125,8 +127,11 @@ class CoinGeckoSource:
 
             return data.get(coin_id, {}).get('usd')
 
-        except Exception as e:
-            print(f"      CoinGecko price error for {ticker}: {e}")
+        except requests.exceptions.RequestException as e:
+            logger.error("CoinGecko price request error for %s: %s", ticker, e)
+            return None
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("CoinGecko price parse error for %s: %s", ticker, e)
             return None
 
 
@@ -214,10 +219,10 @@ class BinanceSource:
             return df
 
         except requests.exceptions.RequestException as e:
-            print(f"      Binance error for {ticker}: {e}")
+            logger.error("Binance request error for %s: %s", ticker, e)
             return None
-        except Exception as e:
-            print(f"      Binance parse error for {ticker}: {e}")
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("Binance parse error for %s: %s", ticker, e)
             return None
 
 

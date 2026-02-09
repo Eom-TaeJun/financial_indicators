@@ -6,6 +6,7 @@ Perplexity API를 사용한 뉴스 수집
 
 import os
 import requests
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
@@ -13,6 +14,15 @@ import json
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger(__name__)
+API_CALL_ERRORS = (
+    requests.exceptions.RequestException,
+    ValueError,
+    KeyError,
+    TypeError,
+    json.JSONDecodeError,
+)
+JSON_PARSE_ERRORS = (json.JSONDecodeError, ValueError, TypeError)
 
 
 @dataclass
@@ -66,8 +76,8 @@ class PerplexityNewsCollector:
 
             result = response.json()
             return result['choices'][0]['message']['content']
-        except Exception as e:
-            print(f"⚠️  Perplexity API error: {e}")
+        except API_CALL_ERRORS as e:
+            logger.warning("Perplexity API error: %s", e)
             return ""
 
     def get_ticker_news(self, ticker: str, max_articles: int = 5) -> List[NewsArticle]:
@@ -146,12 +156,12 @@ Return ONLY the JSON array, no additional text.
 
                 return articles
             else:
-                print(f"⚠️  No JSON found in response for {ticker}")
+                logger.warning("No JSON found in response for %s", ticker)
                 return []
 
-        except json.JSONDecodeError as e:
-            print(f"⚠️  JSON parse error for {ticker}: {e}")
-            print(f"Response: {response[:200]}")
+        except JSON_PARSE_ERRORS as e:
+            logger.warning("JSON parse error for %s: %s", ticker, e)
+            logger.debug("Raw response prefix for %s: %s", ticker, response[:200])
             return []
 
     def get_market_sentiment(self) -> Dict:
@@ -210,11 +220,11 @@ Return ONLY the JSON object.
                 json_str = response[start_idx:end_idx]
                 return json.loads(json_str)
             else:
-                print("⚠️  No JSON found in market sentiment response")
+                logger.warning("No JSON found in market sentiment response")
                 return {}
 
-        except json.JSONDecodeError as e:
-            print(f"⚠️  JSON parse error in market sentiment: {e}")
+        except JSON_PARSE_ERRORS as e:
+            logger.warning("JSON parse error in market sentiment: %s", e)
             return {}
 
     def get_economic_calendar(self) -> List[Dict]:
@@ -261,7 +271,7 @@ Return ONLY the JSON array, maximum 10 events.
             else:
                 return []
 
-        except json.JSONDecodeError:
+        except JSON_PARSE_ERRORS:
             return []
 
 

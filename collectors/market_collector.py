@@ -4,13 +4,20 @@ Market Collector - 시장 데이터 수집
 Multi-source with fallback: Alpha Vantage → yfinance
 """
 
-import yfinance as yf
+import logging
 import pandas as pd
-from datetime import datetime, timedelta
 from typing import Dict, Optional, List, Tuple
 import warnings
 
-from config import MARKET_TICKERS, US_MAJOR_COMPANIES
+try:
+    from ..config import MARKET_TICKERS, US_MAJOR_COMPANIES
+except ImportError:
+    from config import MARKET_TICKERS, US_MAJOR_COMPANIES
+
+try:
+    from .base_multi_source import BaseMultiSourceCollector
+except ImportError:
+    from base_multi_source import BaseMultiSourceCollector
 
 try:
     from .market_sources import AlphaVantageSource
@@ -19,8 +26,10 @@ except ImportError:
 
 warnings.filterwarnings('ignore')
 
+logger = logging.getLogger(__name__)
 
-class MarketCollector:
+
+class MarketCollector(BaseMultiSourceCollector):
     """
     미국 시장 데이터 수집기
 
@@ -35,9 +44,7 @@ class MarketCollector:
             lookback_days: 데이터 수집 기간 (일)
             use_alpha_vantage: True면 Alpha Vantage 사용, False면 yfinance만 사용
         """
-        self.lookback_days = lookback_days
-        self.end_date = datetime.now()
-        self.start_date = self.end_date - timedelta(days=lookback_days)
+        super().__init__(lookback_days=lookback_days)
         self.use_alpha_vantage = use_alpha_vantage
 
         # Alpha Vantage 초기화
@@ -45,31 +52,6 @@ class MarketCollector:
             self.alpha_vantage = AlphaVantageSource()
         else:
             self.alpha_vantage = None
-
-        self.collection_status = {}
-
-    def _fetch_via_yfinance(self, ticker: str) -> Optional[pd.DataFrame]:
-        """yfinance를 통한 데이터 수집 (fallback)"""
-        try:
-            data = yf.download(
-                ticker,
-                start=self.start_date,
-                end=self.end_date,
-                progress=False,
-                auto_adjust=True
-            )
-
-            if data.empty:
-                return None
-
-            # MultiIndex 처리
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-
-            return data
-
-        except Exception:
-            return None
 
     def _fetch_via_alpha_vantage(self, ticker: str) -> Optional[pd.DataFrame]:
         """Alpha Vantage를 통한 데이터 수집 (primary)"""
@@ -87,7 +69,7 @@ class MarketCollector:
 
             return data
 
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             return None
 
     def fetch_ticker(self, ticker: str, name: str) -> Tuple[Optional[pd.DataFrame], Dict]:
@@ -117,7 +99,7 @@ class MarketCollector:
             if data is not None and not data.empty:
                 status['success'] = True
                 status['source'] = 'alpha_vantage'
-                print(f"   ✅ {ticker:6s} ({name}) - AlphaVantage: {len(data)} days")
+                logger.info("%s (%s) - AlphaVantage: %s days", ticker, name, len(data))
                 return data, status
 
         # 2. yfinance 시도 (Fallback)
@@ -128,12 +110,12 @@ class MarketCollector:
             status['success'] = True
             status['source'] = 'yfinance'
             source_label = " (fallback)" if 'alpha_vantage' in status['attempts'] else ""
-            print(f"   ✅ {ticker:6s} ({name}) - yfinance{source_label}: {len(data)} days")
+            logger.info("%s (%s) - yfinance%s: %s days", ticker, name, source_label, len(data))
             return data, status
 
         # 모두 실패
         status['success'] = False
-        print(f"   ❌ {ticker:6s} ({name}) - All sources failed")
+        logger.warning("%s (%s) - all sources failed", ticker, name)
         return None, status
 
     def collect_category(self, category_name: str, tickers: Dict[str, str]) -> Dict[str, pd.DataFrame]:
@@ -147,7 +129,7 @@ class MarketCollector:
         Returns:
             Dictionary of {ticker: DataFrame}
         """
-        print(f"\n📈 Collecting {category_name} ({len(tickers)} tickers)...")
+        logger.info("Collecting %s (%s tickers)", category_name, len(tickers))
         results = {}
 
         for ticker, name in tickers.items():
@@ -158,7 +140,7 @@ class MarketCollector:
                 results[ticker] = data
 
         success_rate = len(results) / len(tickers) * 100 if tickers else 0
-        print(f"   Success: {len(results)}/{len(tickers)} ({success_rate:.1f}%)")
+        logger.info("Success: %s/%s (%.1f%%)", len(results), len(tickers), success_rate)
 
         # Source 통계
         sources = {}
@@ -168,7 +150,7 @@ class MarketCollector:
                 sources[source] = sources.get(source, 0) + 1
 
         if sources:
-            print(f"   Sources used: {sources}")
+            logger.info("Sources used: %s", sources)
 
         return results
 
@@ -203,39 +185,31 @@ class MarketCollector:
         Returns:
             Dictionary of {ticker: DataFrame}
         """
-        print(f"\n📊 Market Data Collection")
-        print(f"   Period: {self.start_date.date()} to {self.end_date.date()}")
+        logger.info("Market Data Collection")
+        logger.info("Period: %s to %s", self.start_date.date(), self.end_date.date())
         av_status = "Enabled ✓" if (self.use_alpha_vantage and self.alpha_vantage and self.alpha_vantage.available) else "Disabled (yfinance only)"
-        print(f"   Alpha Vantage: {av_status}")
-        print("="*60)
+        logger.info("Alpha Vantage: %s", av_status)
+        logger.info("=" * 60)
 
         all_data = {}
         self.collection_status = {}
 
         if include_etfs:
-            print("\n" + "="*60)
-            print("ETFs Collection")
-            print("="*60)
+            logger.info("=" * 60)
+            logger.info("ETFs Collection")
+            logger.info("=" * 60)
             etf_data = self.collect_all_etfs()
             all_data.update(etf_data)
 
         if include_companies:
-            print("\n" + "="*60)
-            print("Major Companies Collection")
-            print("="*60)
+            logger.info("=" * 60)
+            logger.info("Major Companies Collection")
+            logger.info("=" * 60)
             company_data = self.collect_all_companies()
             all_data.update(company_data)
 
-        print(f"\n✅ Total collected: {len(all_data)} tickers\n")
+        logger.info("Total collected: %s tickers", len(all_data))
         return all_data
-
-    def get_latest_prices(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
-        """각 티커의 최신 종가 추출"""
-        latest = {}
-        for ticker, df in data.items():
-            if not df.empty and 'Close' in df.columns:
-                latest[ticker] = df['Close'].iloc[-1]
-        return latest
 
     def calculate_returns(self, data: Dict[str, pd.DataFrame], periods: List[int] = None) -> pd.DataFrame:
         """수익률 계산"""
@@ -297,33 +271,12 @@ class MarketCollector:
 
         return pd.DataFrame(sector_data).sort_values('return_1m', ascending=False)
 
-    def get_source_statistics(self) -> Dict:
-        """데이터 소스 통계"""
-        stats = {
-            'total': len(self.collection_status),
-            'successful': 0,
-            'failed': 0,
-            'by_source': {},
-        }
-
-        for status in self.collection_status.values():
-            if status['success']:
-                stats['successful'] += 1
-                source = status['source']
-                stats['by_source'][source] = stats['by_source'].get(source, 0) + 1
-            else:
-                stats['failed'] += 1
-
-        return stats
-
 
 # ============================================================================
 # Testing
 # ============================================================================
 
 if __name__ == "__main__":
-    import os
-
     print("\n" + "="*70)
     print("🧪 Testing Market Collector with Alpha Vantage")
     print("="*70)

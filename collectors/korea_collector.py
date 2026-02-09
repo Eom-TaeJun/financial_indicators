@@ -4,13 +4,21 @@ Korea Collector - 한국 시장 데이터 수집
 Multi-source with fallback: FinanceDataReader → pykrx → yfinance
 """
 
-import yfinance as yf
+import logging
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Optional, Tuple
 import warnings
 
-from config import KOREA_TICKERS
+try:
+    from ..config import KOREA_TICKERS
+except ImportError:
+    from config import KOREA_TICKERS
+
+try:
+    from .base_multi_source import BaseMultiSourceCollector
+except ImportError:
+    from base_multi_source import BaseMultiSourceCollector
 
 try:
     from .korea_sources import FinanceDataReaderSource, PyKrxSource
@@ -19,8 +27,10 @@ except ImportError:
 
 warnings.filterwarnings('ignore')
 
+logger = logging.getLogger(__name__)
 
-class KoreaCollector:
+
+class KoreaCollector(BaseMultiSourceCollector):
     """
     한국 시장 데이터 수집기
 
@@ -36,40 +46,13 @@ class KoreaCollector:
             lookback_days: 데이터 수집 기간 (일)
             use_multi_source: True면 FDR/pykrx 사용, False면 yfinance만 사용
         """
-        self.lookback_days = lookback_days
-        self.end_date = datetime.now()
-        self.start_date = self.end_date - timedelta(days=lookback_days)
+        super().__init__(lookback_days=lookback_days)
         self.use_multi_source = use_multi_source
 
         # Data sources 초기화
         if use_multi_source:
             self.fdr = FinanceDataReaderSource()
             self.pykrx = PyKrxSource()
-
-        self.collection_status = {}
-
-    def _fetch_via_yfinance(self, ticker: str) -> Optional[pd.DataFrame]:
-        """yfinance를 통한 데이터 수집 (fallback)"""
-        try:
-            data = yf.download(
-                ticker,
-                start=self.start_date,
-                end=self.end_date,
-                progress=False,
-                auto_adjust=True
-            )
-
-            if data.empty:
-                return None
-
-            # MultiIndex 처리
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-
-            return data
-
-        except Exception:
-            return None
 
     def _fetch_via_fdr(self, ticker: str) -> Optional[pd.DataFrame]:
         """FinanceDataReader를 통한 데이터 수집 (primary)"""
@@ -78,7 +61,7 @@ class KoreaCollector:
 
         try:
             return self.fdr.fetch_data(ticker, self.start_date, self.end_date)
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             return None
 
     def _fetch_via_pykrx(self, ticker: str) -> Optional[pd.DataFrame]:
@@ -92,7 +75,7 @@ class KoreaCollector:
                 return self.pykrx.fetch_kospi_index(self.start_date, self.end_date)
             else:
                 return self.pykrx.fetch_data(ticker, self.start_date, self.end_date)
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             return None
 
     def fetch_ticker(self, ticker: str, name: str) -> Tuple[Optional[pd.DataFrame], Dict]:
@@ -125,7 +108,7 @@ class KoreaCollector:
             if data is not None and not data.empty:
                 status['success'] = True
                 status['source'] = 'fdr'
-                print(f"   ✅ {ticker:15s} ({name}) - FDR: {len(data)} days")
+                logger.info("%s (%s) - FDR: %s days", ticker, name, len(data))
 
         # 2. pykrx 시도 (Secondary)
         if data is None and self.use_multi_source:
@@ -135,7 +118,7 @@ class KoreaCollector:
             if data is not None and not data.empty:
                 status['success'] = True
                 status['source'] = 'pykrx'
-                print(f"   ✅ {ticker:15s} ({name}) - pykrx: {len(data)} days")
+                logger.info("%s (%s) - pykrx: %s days", ticker, name, len(data))
 
         # 3. yfinance 시도 (Fallback)
         if data is None:
@@ -145,12 +128,12 @@ class KoreaCollector:
             if data is not None and not data.empty:
                 status['success'] = True
                 status['source'] = 'yfinance'
-                print(f"   ✅ {ticker:15s} ({name}) - yfinance (fallback): {len(data)} days")
+                logger.info("%s (%s) - yfinance (fallback): %s days", ticker, name, len(data))
 
         # 기본 데이터 수집 실패
         if data is None or data.empty:
             status['success'] = False
-            print(f"   ❌ {ticker:15s} ({name}) - All sources failed")
+            logger.warning("%s (%s) - all sources failed", ticker, name)
             return None, status
 
         # 고급 데이터 추가 (pykrx 사용)
@@ -169,7 +152,7 @@ class KoreaCollector:
                 # if market_cap:
                 #     data['market_cap'] = market_cap
 
-            except Exception:
+            except (ValueError, KeyError, TypeError):
                 # 고급 데이터 수집 실패는 무시
                 pass
 
@@ -186,7 +169,7 @@ class KoreaCollector:
         Returns:
             Dictionary of {ticker: DataFrame}
         """
-        print(f"\n🇰🇷 Collecting {category_name} ({len(tickers)} items)...")
+        logger.info("Collecting %s (%s items)", category_name, len(tickers))
         results = {}
 
         # config.py의 KOREA_TICKERS는 {name: ticker} 형식
@@ -198,7 +181,7 @@ class KoreaCollector:
                 results[ticker] = data
 
         success_rate = len(results) / len(tickers) * 100 if tickers else 0
-        print(f"   Success: {len(results)}/{len(tickers)} ({success_rate:.1f}%)")
+        logger.info("Success: %s/%s (%.1f%%)", len(results), len(tickers), success_rate)
 
         # Source 통계
         sources = {}
@@ -208,7 +191,7 @@ class KoreaCollector:
                 sources[source] = sources.get(source, 0) + 1
 
         if sources:
-            print(f"   Sources used: {sources}")
+            logger.info("Sources used: %s", sources)
 
         return results
 
@@ -219,10 +202,13 @@ class KoreaCollector:
         Returns:
             Dictionary of {ticker: DataFrame}
         """
-        print(f"\n📊 Korea Market Data Collection")
-        print(f"   Period: {self.start_date.date()} to {self.end_date.date()}")
-        print(f"   Multi-source: {'Enabled ✓' if self.use_multi_source else 'Disabled (yfinance only)'}")
-        print("="*60)
+        logger.info("Korea Market Data Collection")
+        logger.info("Period: %s to %s", self.start_date.date(), self.end_date.date())
+        logger.info(
+            "Multi-source: %s",
+            "Enabled ✓" if self.use_multi_source else "Disabled (yfinance only)",
+        )
+        logger.info("=" * 60)
 
         all_data = {}
         self.collection_status = {}
@@ -231,16 +217,8 @@ class KoreaCollector:
             results = self.collect_category(category.upper(), tickers)
             all_data.update(results)
 
-        print(f"\n✅ Total collected: {len(all_data)} assets\n")
+        logger.info("Total collected: %s assets", len(all_data))
         return all_data
-
-    def get_latest_prices(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
-        """각 종목의 최신 가격 추출"""
-        latest = {}
-        for ticker, df in data.items():
-            if not df.empty and 'Close' in df.columns:
-                latest[ticker] = df['Close'].iloc[-1]
-        return latest
 
     def calculate_kospi_metrics(self, data: Dict[str, pd.DataFrame]) -> Dict:
         """KOSPI 주요 지표 계산"""
@@ -300,25 +278,6 @@ class KoreaCollector:
             })
 
         return pd.DataFrame(sector_data).sort_values('return_1m', ascending=False)
-
-    def get_source_statistics(self) -> Dict:
-        """데이터 소스 통계"""
-        stats = {
-            'total': len(self.collection_status),
-            'successful': 0,
-            'failed': 0,
-            'by_source': {},
-        }
-
-        for status in self.collection_status.values():
-            if status['success']:
-                stats['successful'] += 1
-                source = status['source']
-                stats['by_source'][source] = stats['by_source'].get(source, 0) + 1
-            else:
-                stats['failed'] += 1
-
-        return stats
 
 
 # ============================================================================

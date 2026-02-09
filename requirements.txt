@@ -20,3 +20,6 @@ pykrx>=1.0.36               # KRX 공식 데이터, 무료
 
 # PostgreSQL integration for RA company analysis (optional)
 psycopg[binary]>=3.1.18
+
+# Dev tooling
+ruff>=0.6.0
